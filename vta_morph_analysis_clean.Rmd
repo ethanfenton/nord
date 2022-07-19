@@ -1,0 +1,463 @@
+---
+title: "vta_morph_analysis_clean"
+author: "Ethan Fenton"
+date: '2022-07-12'
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Load Libraries
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(Seurat)
+library(dplyr)
+library(Matrix)
+library(gdata)
+library(ggplot2)
+library(patchwork)
+library(umap)
+library(uwot)
+library(HGNChelper)
+memory.limit(10000000)
+```
+# Read in Data
+```{r read data}
+vta_morph <-Read10X(data.dir = "G:\\Shared drives\\Nord Lab - Computational Projects\\VTA_morphine\\MORPHINE_1_w_introns\\outs\\filtered_feature_bc_matrix")
+
+vta_morph_2 <-Read10X(data.dir = "G:\\Shared drives\\Nord Lab - Computational Projects\\VTA_morphine\\MORPHINE_2_w_introns\\outs\\filtered_feature_bc_matrix")
+```
+# Creating Seurat Objects
+```{r create seurat object}
+#should I use these criteria?: min.cells=3, min.features=200
+vta_morph <- CreateSeuratObject(counts=vta_morph, project="vta_morph")
+vta_morph_2 <- CreateSeuratObject(counts=vta_morph_2, project="vta_morph_2")
+```
+# Adding %mt Data
+```{r adding %mt data}
+vta_morph[["percent.mt"]] <- PercentageFeatureSet(vta_morph, pattern = "^mt-")
+vta_morph_2[["percent.mt"]] <- PercentageFeatureSet(vta_morph_2, pattern = "^mt-")
+
+```
+
+# Graph Initial Features
+```{r graph initial violins}
+VlnPlot(vta_morph, features=c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol=3, pt.size=0)
+VlnPlot(vta_morph_2, features=c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol=3, pt.size=0)
+
+
+plot1 <- FeatureScatter(vta_morph, feature1="nCount_RNA", feature2="percent.mt")
+plot2 <- FeatureScatter(vta_morph_2, feature1="nCount_RNA", feature2 = "percent.mt")
+
+plot1a <- FeatureScatter(vta_morph, feature1 = "nCount_RNA", feature2="nFeature_RNA")
+plot2a <- FeatureScatter(vta_morph_2, feature1 = "nCount_RNA", feature2="nFeature_RNA")
+
+plot1 + plot2
+plot1a + plot2a
+
+hist_nCount <- function(so1, so2){
+  hist1 <- ggplot() +
+    geom_histogram(data=filter(so1@meta.data, nCount_RNA < 12000), aes(x=nCount_RNA), binwidth=100) +
+    geom_histogram(data=filter(so2@meta.data, nCount_RNA < 12000),aes(x=nCount_RNA), fill='red',alpha=0.30, binwidth=100) +
+    geom_vline(xintercept=2000, linetype="dashed") +
+    scale_x_continuous(breaks=seq(0,12000,1000)) +
+    theme(axis.text.x = element_text(angle = 45)) +
+    ggtitle("Histogram of RNA read counts")
+  hist1
+}
+hist_nCount(vta_morph, vta_morph_2)
+
+hist_nFeature <- function(so1, so2){#so1 means seurat object 1
+  hist2 <- ggplot() +
+    geom_histogram(data=so1@meta.data, aes(x=nFeature_RNA), binwidth=100) +
+    geom_histogram(data=so2@meta.data, aes(x=nFeature_RNA), fill='red',alpha=0.30, binwidth=100) +
+    geom_vline(xintercept=1200, linetype="dashed") +
+    scale_x_continuous(breaks=seq(0,12000,500)) +
+    theme(axis.text.x = element_text(angle = 90)) +
+    ggtitle("Histogram of RNA Feature Counts")
+  hist2
+}
+hist_nFeature(vta_morph, vta_morph_2)
+
+```
+# Filter
+```{r filtering}
+vta_morph <- subset(vta_morph, subset=nCount_RNA > 1500)
+vta_morph_2 <- subset(vta_morph_2, subset=nCount_RNA > 1500)
+hist_nCount(vta_morph, vta_morph_2) + hist_nFeature(vta_morph, vta_morph_2)
+
+vta_morph <- subset(vta_morph, subset = nFeature_RNA > 500 & nFeature_RNA < 7500 & percent.mt < 5)
+vta_morph_2 <- subset(vta_morph_2, subset = nFeature_RNA > 500 & nFeature_RNA < 7500 & percent.mt < 5)
+hist_nCount(vta_morph, vta_morph_2) + hist_nFeature(vta_morph, vta_morph_2)
+```
+
+# Merge the Pools
+```{r merge the pools}
+vta_morph.combined <- merge(vta_morph, y=vta_morph_2, add.cell.ids = c("P1", "P2"), project = "vta_morphine")
+```
+
+
+# Set Genotype and Sex Metadata
+```{r set genotype and sex metadata}
+Idents(vta_morph.combined) <- ("orig.ident")
+VlnPlot(object=vta_morph.combined, c("Xist")) + scale_y_continuous(breaks=seq(0,5,0.5), limits=c(0,5))
+m <- FetchData(object = vta_morph.combined, vars = c("Xist")) > 0.5
+for(i in 1:length(m)){
+  a <- "male"
+  if (m[[i]]){
+    a <- "female"
+  }
+  m[[i]] <- a
+}
+vta_morph.combined@meta.data$sex <- m[1:length(m)]
+
+orig.ident <- vta_morph.combined@meta.data$orig.ident
+sex <- vta_morph.combined@meta.data$sex
+genotype <- c()
+for(i in 1:length(orig.ident)){
+  if (sex[[i]] == 'male' & orig.ident[[i]] == 'vta_morph'){
+    genotype[i] <- "RMOR"
+  }
+  else if (sex[[i]] == 'male' & orig.ident[[i]] == 'vta_morph_2'){
+    genotype[i] <- "wt"
+  }
+  else if (sex[[i]] == 'female' & orig.ident[[i]] == 'vta_morph'){
+    genotype[i] <- "wt"
+  }
+  else if (sex[[i]] == 'female' & orig.ident[[i]] == 'vta_morph_2'){
+    genotype[i] <- "RMOR"
+  }
+}
+vta_morph.combined@meta.data$genotype <- genotype[1:length(genotype)]
+```
+# Normalize the Merged Data
+```{r scale the merged data}
+#normalize
+vta_morph.combined <- NormalizeData(vta_morph.combined, normalization.method="LogNormalize", scale.factor=10000)
+```
+# Find Variable Features
+```{r Find Variable Features}
+vta_morph.combined <- FindVariableFeatures(vta_morph.combined, selection.method="vst", nfeatures=2000)
+```
+# Scale based on Variable Features (tried this or scaling on all genes but got the same heatmap error either way )
+```{r scale}
+combined.variable.genes <- VariableFeatures(vta_morph.combined)
+vta_morph.combined <- ScaleData(vta_morph.combined, features=combined.variable.genes)
+```
+# Scale based on all genes
+```{r scale}
+#scale
+#vta_morph.combined <- ScaleData(vta_morph.combined, features=rownames(vta_morph.combined))
+```
+
+
+# PCA and Elbow
+```{r Run PCA}
+vta_morph.combined <- RunPCA(vta_morph.combined, features=combined.variable.genes)
+ElbowPlot(vta_morph.combined)
+```
+# Cluster Cells
+```{r Cluster Cells}
+vta_morph.combined <- FindNeighbors(vta_morph.combined, dims = 1:12)
+vta_morph.combined <- FindClusters(vta_morph.combined, resolution = 0.5)
+```
+
+# UMAP
+```{r UMAP}
+vta_morph.combined <- RunUMAP(vta_morph.combined, dims = 1:12)
+
+Idents(vta_morph.combined) <- "seurat_clusters"
+umap.umap <- DimPlot(vta_morph.combined, reduction = "umap", label=TRUE)
+
+Idents(vta_morph.combined) <- "orig.ident"
+orig.ident.umap <- DimPlot(vta_morph.combined, reduction = "umap")
+
+Idents(vta_morph.combined) <- "sex"
+sex.umap <- DimPlot(vta_morph.combined, reduction = "umap")
+
+Idents(vta_morph.combined) <- "genotype"
+genotype.umap <- DimPlot(vta_morph.combined, reduction = "umap")
+
+umap.umap
+orig.ident.umap
+sex.umap
+genotype.umap
+```
+
+# Potentially Relevant Stats
+```{r potentially relevant stats}
+print("Number of Nucleui Per Condition")
+paste("Total:", length(vta_morph.combined@meta.data$orig.ident))
+paste("Pool 1:", sum(vta_morph.combined@meta.data$orig.ident == "vta_morph"))
+paste("Pool 2:", sum(vta_morph.combined@meta.data$orig.ident == "vta_morph_2"))
+
+paste("Males:", sum(vta_morph.combined@meta.data$sex == "male"))
+paste("Females:", sum(vta_morph.combined@meta.data$sex == "female"))
+
+paste("Pool 1 Males (i.e. RMOR males):", sum(vta_morph.combined@meta.data$sex == "male" & vta_morph.combined@meta.data$orig.ident == "vta_morph"))
+paste("Pool 1 Females (i.e. wt females):", sum(vta_morph.combined@meta.data$sex == "female" & vta_morph.combined@meta.data$orig.ident == "vta_morph"))
+
+paste("Pool 2 Males (i.e. wt males):", sum(vta_morph.combined@meta.data$sex == "male" & vta_morph.combined@meta.data$orig.ident == "vta_morph_2"))
+paste("Pool 2 Females (i.e. RMOR females):", sum(vta_morph.combined@meta.data$sex == "female" & vta_morph.combined@meta.data$orig.ident == "vta_morph_2"))
+
+paste("RMOR:", sum(vta_morph.combined@meta.data$genotype == "RMOR"))
+paste("wt:", sum(vta_morph.combined@meta.data$genotype == "wt"))
+paste("Kept cells:", sum(vta_morph.combined@meta.data$genotype == "wt"))
+
+```
+# Assign Cell Type with ScType
+``` {r Assign Cell Type with ScType}
+#https://github.com/IanevskiAleksandr/sc-type
+
+# load gene set preparation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R")
+# load cell type annotation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+
+# DB file
+db_ = "https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScTypeDB_full.xlsx";
+tissue = "Brain" # e.g. Immune system, Liver, Pancreas, Kidney, Eye, Brain
+
+# prepare gene sets
+gs_list = gene_sets_prepare(db_, tissue)
+
+# get cell-type by cell matrix
+es.max = sctype_score(scRNAseqData = vta_morph.combined[["RNA"]]@scale.data, scaled = TRUE, 
+                      gs = gs_list$gs_positive, gs2 = gs_list$gs_negative) 
+
+
+# merge by cluster 
+# not that cL_resutls seems to be spelled wrong
+# this is used for the bubble visualization too so it is important that the condensed cell type naming is done after this
+cL_resutls = do.call("rbind", lapply(unique(vta_morph.combined@meta.data$seurat_clusters), function(cl){
+    es.max.cl = sort(rowSums(es.max[ ,rownames(vta_morph.combined@meta.data[vta_morph.combined@meta.data$seurat_clusters==cl, ])]), decreasing = !0)
+    head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(vta_morph.combined@meta.data$seurat_clusters==cl)), 10)
+}))
+sctype_scores = cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)  
+
+# set low-confident (low ScType score) clusters to "unknown"
+sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < sctype_scores$ncells/4] = "Unknown"
+print(sctype_scores[,1:3])
+
+# display clusters on the UMAP
+vta_morph.combined@meta.data$cell_type = ""
+for(j in unique(sctype_scores$cluster)){
+  cl_type = sctype_scores[sctype_scores$cluster==j,]; 
+  vta_morph.combined@meta.data$cell_type[vta_morph.combined@meta.data$seurat_clusters == j] = as.character(cl_type$type[1])
+}
+
+DimPlot(vta_morph.combined, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'cell_type')  
+
+#condense cell type names for easier display
+vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Glutamatergic neurons")] <- "Glut"
+vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Oligodendrocyte precursor cells")] <- "OPC"
+vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "GABAergic neurons")] <- "GABA"
+vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Dopaminergic neurons")] <- "Dopa"
+vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Endothelial cells")] <- "Endothelial"
+vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Microglial cells")] <- "Microglia"
+vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Neuroepithelial cells")] <- "Neuroepithelial"
+```
+# Bubble ScType Visualization
+```{r bubble ScType visualization}
+# load libraries
+lapply(c("ggraph","igraph","tidyverse", "data.tree"), library, character.only = T)
+
+# prepare edges
+cL_resutls = cL_resutls[order(cL_resutls$cluster),]; edges = cL_resutls; edges$type = paste0(edges$type,"_",edges$cluster); edges$cluster = paste0("cluster ", edges$cluster); edges = edges[,c("cluster", "type")]; colnames(edges) = c("from", "to"); rownames(edges) <- NULL
+
+# prepare nodes
+nodes_lvl1 = sctype_scores[,c("cluster", "ncells")]; nodes_lvl1$cluster = paste0("cluster ", nodes_lvl1$cluster); nodes_lvl1$Colour = "#f1f1ef"; nodes_lvl1$ord = 1; nodes_lvl1$realname = nodes_lvl1$cluster; nodes_lvl1 = as.data.frame(nodes_lvl1); nodes_lvl2 = c(); 
+ccolss= c("#5f75ae","#92bbb8","#64a841","#e5486e","#de8e06","#eccf5a","#b5aa0f","#e4b680","#7ba39d","#b15928","#ffff99", "#6a3d9a","#cab2d6","#ff7f00","#fdbf6f","#e31a1c","#fb9a99","#33a02c","#b2df8a","#1f78b4","#a6cee3")
+for (i in 1:length(unique(cL_resutls$cluster))){
+  dt_tmp = cL_resutls[cL_resutls$cluster == unique(cL_resutls$cluster)[i], ]; nodes_lvl2 = rbind(nodes_lvl2, data.frame(cluster = paste0(dt_tmp$type,"_",dt_tmp$cluster), ncells = dt_tmp$scores, Colour = ccolss[i], ord = 2, realname = dt_tmp$type))
+}
+nodes = rbind(nodes_lvl1, nodes_lvl2); nodes$ncells[nodes$ncells<1] = 1;
+files_db = openxlsx::read.xlsx(db_)[,c("cellName","shortName")]; files_db = unique(files_db); nodes = merge(nodes, files_db, all.x = T, all.y = F, by.x = "realname", by.y = "cellName", sort = F)
+
+nodes$shortName[is.na(nodes$shortName)] = nodes$realname[is.na(nodes$shortName)]; nodes = nodes[,c("cluster", "ncells", "Colour", "ord", "shortName", "realname")]
+
+#ethan added the following line to prevent an error about duplicate vertices
+nodes <- nodes[!duplicated(nodes[,1]),]
+
+mygraph <- graph_from_data_frame(edges, vertices=nodes)
+
+# Make the graph
+gggr<- ggraph(mygraph, layout = 'circlepack', weight=I(ncells)) + 
+  geom_node_circle(aes(filter=ord==1,fill=I("#F5F5F5"), colour=I("#D3D3D3")), alpha=0.9) + geom_node_circle(aes(filter=ord==2,fill=I(Colour), colour=I("#D3D3D3")), alpha=0.9) +
+  theme_void() + geom_node_text(aes(filter=ord==2, label=shortName, colour="black", fill="red", repel = !1, parse = T, size = I(log(ncells,25)*1.5)))+ geom_node_label(aes(filter=ord==1,  label=shortName, colour=I("#000000"), size = I(3), fill="white", parse = T), repel = !0, segment.linetype="dotted")
+# The following lines install scatter from bioconductor 
+#if (!require("BiocManager", quietly = TRUE))
+#    install.packages("BiocManager")
+#
+#BiocManager::install("scater")
+
+scater::multiplot(DimPlot(vta_morph.combined, reduction = "umap", label = TRUE, repel = TRUE, cols = ccolss), gggr, cols = 2)
+```
+# DE
+```{r Clustering and DE by condition}
+Idents(vta_morph.combined) <- "seurat_clusters"
+
+vta_morph.combined_markers <- FindAllMarkers(vta_morph.combined, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+# add cell types to differentially expressed genes
+u <- unique(vta_morph.combined@meta.data[,c("cell_type","seurat_clusters")])
+vta_morph.combined_markers$cell_type <- u$cell_type[match(vta_morph.combined_markers$cluster, u$seurat_clusters)]
+
+# reorganize the markers
+vta_morph.combined_markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 10, order_by = avg_log2FC) -> top10
+
+vta_morph.combined_markers %>%
+    group_by(cluster) %>%
+    filter(p_val_adj < 0.05)  -> cluster_top_genes
+
+write.csv(cluster_top_genes,"~/UCDavis/Nord/pval_cluster_top_genes.csv", row.names = FALSE)
+```
+# Sex and Genotype DE for later
+```{r more DE for later}
+## what genes are differentially expressed between sexes and genotypes
+
+Idents(vta_morph.combined) <- "sex"
+sex.markers <- FindMarkers(vta_morph.combined, ident.1 = 'male', ident.2 = 'female', min.pct = 0.25)
+
+sex.markers %>%
+    group_by(cluster) %>%
+    filter(p_val_adj < 0.05)  -> sex_top_genes
+# 
+# Idents(vta_morph.combined) <- "genotype"
+# genotype.markers <- FindMarkers(vta_morph.combined, ident.1 = 'wt', ident.2 = 'RMOR', min.pct = 0.25)
+# 
+#  genotype.markers %>%
+#     group_by(cluster) %>%
+#     filter(p_val_adj < 0.05)  -> genotype_top_genes
+
+
+#genotype differences across clusters
+Idents(vta_morph.combined) <- "seurat_clusters"
+wt <- subset(vta_morph.combined, subset=(genotype=='wt'))
+RMOR <- subset(vta_morph.combined, subset=(genotype=='RMOR'))
+wt.markers <- FindAllMarkers(wt, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+RMOR.markers <- FindAllMarkers(RMOR, only.pos=TRUE, min.pct=0.25, logfc.threshold=0.25)
+
+wt.markers %>%
+    group_by(cluster) %>%
+    filter(p_val_adj < 0.05)  -> wt_top_genes
+
+RMOR.markers %>%
+    group_by(cluster) %>%
+    filter(p_val_adj < 0.05)  -> RMOR_top_genes
+
+#add cell type to the top_genes lists
+cell_types_clusters <- vta_morph.combined@meta.data %>% select(seurat_clusters, cell_type) %>% unique()
+
+cell_type_cluster_list <- c()
+for (gene in 1:length(wt_top_genes$cluster)){
+  clust <- wt_top_genes$cluster[gene]
+  cell_type_cluster_list <- append(cell_type_cluster_list,  cell_types_clusters$cell_type[which(cell_types_clusters$seurat_cluster == clust)])
+}
+wt_top_genes$cell_type <- cell_type_cluster_list  
+
+
+cell_type_cluster_list <- c()
+for (gene in 1:length(RMOR_top_genes$cluster)){
+  clust <- RMOR_top_genes$cluster[gene]
+  cell_type_cluster_list <- append(cell_type_cluster_list,  cell_types_clusters$cell_type[which(cell_types_clusters$seurat_cluster == clust)])
+}
+RMOR_top_genes$cell_type <- cell_type_cluster_list  
+
+
+write.csv(wt_top_genes,"~/UCDavis/Nord/pval_wt_top_genes.csv", row.names = FALSE)
+write.csv(RMOR_top_genes,"~/UCDavis/Nord/pval_RMOR_top_genes.csv", row.names = FALSE)
+
+write.csv(wt_top_genes %>% slice_max(n = 10, order_by = avg_log2FC),"~/UCDavis/Nord/pval_wt_top10_genes.csv", row.names = FALSE)
+write.csv(RMOR_top_genes %>% slice_max(n = 10, order_by = avg_log2FC),"~/UCDavis/Nord/pval_RMOR_top10_genes.csv", row.names = FALSE)
+
+
+```
+
+# Heatmap
+```{r Heatmap}
+Idents(vta_morph.combined) <- "seurat_clusters"
+DoHeatmap(vta_morph.combined, features=top10$gene) + NoLegend() + theme(axis.text.y = element_text(size = 2))  
+```
+# Heatmap error
+Warning message:
+In DoHeatmap(vta_morph.combined, features = top10$gene) :
+  The following features were omitted as they were not found in the scale.data slot for the RNA assay: Cdh20, Slc38a1, Ablim2, Rpl38, Hsp90ab1, Rps21, Rplp1, Hsp90aa1, Atp1b1, Calm1, AY036118, Tuba1a, Gm42418, Nkain2, St6galnac3, Enpp2, Slc24a2, Tmeff2, Edil3, Pde4b, Dock10
+
+# Stacked Violin Plot
+```{r stacked violin plot}
+
+
+
+rat_vta_features <- c('Th', 'Slc17e6', 'Pnoc', 'Slc32a1', 'Aqp4', 'Arhgap15', 'Mobp', 'Hist1h2an', 'Pdgfra', 'Dock6', 'Eng', 'Slc18a2', 'Htr2c', 'Grn2', 'Gad1', 'Pdgfrb', 'Drd2', 'Oprm1')
+
+rat_vta_features <- factor(rat_vta_features, levels=rat_vta_features)
+
+mouse_vta_features <- c('Gpc5', 'Slc4a4', 'Myoc', 'Gm3764', 'Adamts9', 'Schip1', 'Erc2', 'Klhl1', 'Sgcd', 'Nrxn3', 'Mecom', 'Flt1', 'Ptprb', 'Slco1a4', 'Adgrl4', 'Gm42418', 'AY036118', 'Tuba1a', 'Calm1', 'Atp1b1', 'Dpp10', 'Frmpd4', 'Zfp385b', 'Grm8', '5730522E02Rik', 'Dgkb', 'Cntn5', 'Ryr3', 'Kctd16', 'Grm1', 'Inpp5d', 'Tgfbr1', 'Dock8', 'Apbb1ip', 'Dock2', 'Bnc2', 'Adamtsl3', 'Col25a1', 'Fbxl7', 'Slc4a10', 'Lhfpl3', 'Tnr', 'Vcan', 'Xylt1', 'Pdgfra', 'St18', 'Prr5l', 'Pex5l', 'St18', 'Dock10', 'Ranbp3l', 'Slc6a20a', 'Bmp6', 'Trpm3', 'Col23a1')
+
+mouse_vta_features <- factor(mouse_vta_features, levels=mouse_vta_features)
+
+Idents(vta_morph.combined) <- "cell_type"
+mouse_feat_stacked_violin <- VlnPlot(vta_morph.combined, features=mouse_vta_features, stack = TRUE, sort = TRUE, flip=TRUE) +
+    theme(legend.position = "none", axis.text.x=element_text(size=10, angle=90, hjust=-0.1, face='bold'), axis.text.y=element_text(size=4)) + ggtitle("Top Variable Genes in Our Data") + scale_x_discrete(position = "top") 
+
+rat_feat_stacked_violin <- VlnPlot(vta_morph.combined, features=rat_vta_features, sort=TRUE, stack = TRUE, flip=TRUE) +
+    theme(legend.position = "none", axis.text.x=element_text(size=10, angle=90, hjust=-0.1, face='bold'), axis.text.y=element_text(size=4)) + ggtitle("Top Variable Genes in Our Data") + scale_x_discrete(position = "top") 
+
+mouse_feat_stacked_violin
+rat_feat_stacked_violin
+
+```
+
+# Bar graph of cell count by cell_type
+```{r cell cout by cell type}
+vta_morph.combined@meta.data$cell_type <- factor(vta_morph.combined@meta.data$cell_type, levels=c("Tanycytes","Endothelial","Oligodendrocytes","Neuroepithelial","GABA","Microglia","Astrocytes","Mature neurons","Glut","OPC", "Dopa"))
+
+data <- vta_morph.combined@meta.data
+ggplot(data=data) +
+  geom_histogram(aes(x=cell_type, fill=genotype), stat="count") +
+  theme(axis.text.x=element_text(size=8, angle=65, hjust=1))
+
+freq_table <- vta_morph.combined@meta.data %>% group_by(cell_type, genotype) %>% summarise(f=n())
+
+freq_table2 <- vta_morph.combined@meta.data %>% group_by(cell_type) %>% summarise(f=n())
+
+freq_table.merged <- merge(freq_table, freq_table2, by = "cell_type", all = T)
+
+ggplot(data=freq_table.merged[seq(2,22,2),]) +
+  geom_bar(aes(x=cell_type, y=f.y/f.y), stat="identity") +
+  geom_bar(aes(x=cell_type, y=f.x/f.y), fill="green", stat="identity") + theme(axis.text.x=element_text(size=8, angle=65, hjust=1)) +
+  ylab("Proportion") +
+  ggtitle("Green Shows Proportion of wt Cells by Cell Type")
+```
+# save image
+```{r save image}
+save.image(file = "~/UCDavis/Nord/vta_morph_analysis_clean.RData")
+#load(file = "~/UCDavis/Nord/vta_morph_analysis_clean.RData")
+
+```
+
+#Notes from Nord Meeting
+ What cells are present in our data
+ for each cell population what genes are DE by cluster
+ Choose best markers:
+ nucleui count by cluster
+ genotype by sex cell count
+ make a meta data variable that is a sex/genotype combo
+ meh - superclustered DE and UMAP
+ Find markers between group 1 and 4
+ number nucleui per cluster
+ pnas paper
+ test sex/genotype comparison on a large cluster
+ Xist bias: need a higher level of Xist expression - UMI count bias
+ DE overall - not really good - might just reflect dominant cell type in the data - we really have to do the DE by cluster
+ 
+ qPCR (2 males and 2 females of each genotype)
+ cell ranger spits out raw count matrix
+ 1036 f-het
+ 1037 f-wt
+ 1038 m-wt
+ 1039 m-het
