@@ -21,11 +21,26 @@ library(uwot)
 library(HGNChelper)
 memory.limit(10000000)
 ```
-# Read in Data
+# Read in Data with Seurat
 ```{r read data}
-vta_morph <-Read10X(data.dir = "G:\\Shared drives\\Nord Lab - Computational Projects\\VTA_morphine\\MORPHINE_1_w_introns\\outs\\filtered_feature_bc_matrix")
+#vta_morph <-Read10X(data.dir = "G:\\Shared drives\\Nord Lab - Computational Projects\\VTA_morphine\\MORPHINE_1_w_introns\\outs\\filtered_feature_bc_matrix")
 
-vta_morph_2 <-Read10X(data.dir = "G:\\Shared drives\\Nord Lab - Computational Projects\\VTA_morphine\\MORPHINE_2_w_introns\\outs\\filtered_feature_bc_matrix")
+#vta_morph_2 <-Read10X(data.dir = "G:\\Shared drives\\Nord Lab - Computational Projects\\VTA_morphine\\MORPHINE_2_w_introns\\outs\\filtered_feature_bc_matrix")
+```
+
+# SoupX: Read in Data, Estimate Rho, and Clean the Data
+```{r SoupX estimate Rho and Clean the Data}
+#https://cran.r-project.org/web/packages/SoupX/vignettes/pbmcTutorial.html
+#read data with SoupX
+vta_morph <- load10X(dataDir = "G:\\Shared drives\\Nord Lab - Computational Projects\\VTA_morphine\\MORPHINE_1_w_introns\\outs\\")
+
+vta_morph_2 <-load10X(dataDir = "G:\\Shared drives\\Nord Lab - Computational Projects\\VTA_morphine\\MORPHINE_2_w_introns\\outs\\")
+
+vta_morph <- autoEstCont(vta_morph)
+vta_morph_2 <- autoEstCont(vta_morph_2)
+
+vta_morph <- adjustCounts(vta_morph)
+vta_morph_2 <- adjustCounts(vta_morph_2)
 ```
 # Creating Seurat Objects
 ```{r create seurat object}
@@ -392,7 +407,7 @@ In DoHeatmap(vta_morph.combined, features = top10$gene) :
 
 
 
-rat_vta_features <- c('Th', 'Slc17e6', 'Pnoc', 'Slc32a1', 'Aqp4', 'Arhgap15', 'Mobp', 'Hist1h2an', 'Pdgfra', 'Dock6', 'Eng', 'Slc18a2', 'Htr2c', 'Grn2', 'Gad1', 'Pdgfrb', 'Drd2', 'Oprm1')
+rat_vta_features <- c('Th', 'Slc17e6', 'Slc17a6', 'Pnoc', 'Slc32a1', 'Aqp4', 'Arhgap15', 'Mobp', 'Hist1h2an', 'Pdgfra', 'Dock6', 'Eng', 'Slc18a2', 'Htr2c', 'Grn2', 'Gad1', 'Pdgfrb', 'Drd2', 'Oprm1')
 
 rat_vta_features <- factor(rat_vta_features, levels=rat_vta_features)
 
