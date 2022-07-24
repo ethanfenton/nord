@@ -7,14 +7,15 @@ library(tidyverse)
 #file_path <- "G:\\My Drive\\Labs\\Nord\\CHD8\\qPCR\\14-Jul-2022_CHD8_Cortex_Validation_plate1.csv"
 #file_path <- "G:\\My Drive\\Labs\\Nord\\CHD8\\qPCR\\15-Jul-2022_CHD8_Cerebellum_Validation_plate1__new_Ct.csv"
 #file_path <- "G:\\My Drive\\Labs\\Nord\\CHD8\\qPCR\\15-Jul-2022_CHD8_Cerebellum_Validation_plate1_new_Ct.csv"
+#file_path <- "G:\\My Drive\\Labs\\Nord\\CHD8\\qPCR\\18-Jul-2022_CHD8_Cortex_downreg_plate1.csv"
+file_path <- "G:\\My Drive\\Labs\\Nord\\CHD8\\qPCR\\21-Jul-2022_CHD8_Cortex_upreg_1083-1086_plate1.csv"
 
-file_path <- "G:\\My Drive\\Labs\\Nord\\CHD8\\qPCR\\18-Jul-2022_CHD8_Cortex_downreg_plate1.csv"
 housekeeping_gene <- "Gapdh"
 
 # the order of the control and experimental groups should align with one another
 # since the ddct comparison will use the order of these lists
-experimental_groups <- c('1036_cx', '1039_cx')
-control_groups <- c('1037_cx', '1038_cx')
+experimental_groups <- c('1086', '1085')
+control_groups <- c('1083', '1084')
 
 df <- read.csv2(file_path, row.names=NULL)
 skips <- which(grepl("Well",df[,1]))
@@ -71,4 +72,5 @@ ddCt <- data.frame(group=group_list, gene=gene_list, ddCt=ddCt_list, fold_change
 ddCt$group[which(ddCt$group==1)] <- "male"
 ddCt$group[which(ddCt$group==2)] <- "female"
 print(ddCt)
+clipr::write_clip(ddCt)
                    

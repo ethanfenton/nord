@@ -6,11 +6,11 @@ output: html_document
 editor_options: 
   chunk_output_type: console
 ---
-#RStudio24
 # Load Libraries
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(Seurat)
+library(SoupX)
 library(dplyr)
 library(Matrix)
 library(gdata)
@@ -19,7 +19,10 @@ library(patchwork)
 library(umap)
 library(uwot)
 library(HGNChelper)
-memory.limit(10000000)
+memory.limit(1000000000)
+library(hash)
+`%ni%` <- Negate(`%in%`)
+seurat_objects <- hash()
 ```
 # Read in Data with Seurat
 ```{r read data}
@@ -104,13 +107,14 @@ hist_nCount(vta_morph, vta_morph_2) + hist_nFeature(vta_morph, vta_morph_2)
 vta_morph <- subset(vta_morph, subset = nFeature_RNA > 500 & nFeature_RNA < 7500 & percent.mt < 5)
 vta_morph_2 <- subset(vta_morph_2, subset = nFeature_RNA > 500 & nFeature_RNA < 7500 & percent.mt < 5)
 hist_nCount(vta_morph, vta_morph_2) + hist_nFeature(vta_morph, vta_morph_2)
+seurat_objects["vta_morph_2"] <- vta_morph_2
+seurat_objects["vta_morph"] <- vta_morph
 ```
 
 # Merge the Pools
 ```{r merge the pools}
 vta_morph.combined <- merge(vta_morph, y=vta_morph_2, add.cell.ids = c("P1", "P2"), project = "vta_morphine")
 ```
-
 
 # Set Genotype and Sex Metadata
 ```{r set genotype and sex metadata}
@@ -149,7 +153,10 @@ vta_morph.combined@meta.data$genotype <- genotype[1:length(genotype)]
 ```{r scale the merged data}
 #normalize
 vta_morph.combined <- NormalizeData(vta_morph.combined, normalization.method="LogNormalize", scale.factor=10000)
+save.image(file = "~/UCDavis/Nord/normal_vta_morph_analysis_clean.RData")
 ```
+
+
 # Find Variable Features
 ```{r Find Variable Features}
 vta_morph.combined <- FindVariableFeatures(vta_morph.combined, selection.method="vst", nfeatures=2000)
@@ -217,7 +224,8 @@ paste("Pool 2 Females (i.e. RMOR females):", sum(vta_morph.combined@meta.data$se
 
 paste("RMOR:", sum(vta_morph.combined@meta.data$genotype == "RMOR"))
 paste("wt:", sum(vta_morph.combined@meta.data$genotype == "wt"))
-paste("Kept cells:", sum(vta_morph.combined@meta.data$genotype == "wt"))
+paste("Kept cells:", length(vta_morph.combined@meta.data$genotype))
+save.image(file = "~/UCDavis/Nord/umap_vta_morph_analysis_clean.RData")
 
 ```
 # Assign Cell Type with ScType
@@ -255,6 +263,17 @@ sctype_scores = cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)
 sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < sctype_scores$ncells/4] = "Unknown"
 print(sctype_scores[,1:3])
 
+#ethan added code to label same cell-type clusters separately
+seen <- c()
+for (row in 1:length(sctype_scores$type)){
+  type <- sctype_scores$type[row]
+  seen <- append(seen, type)
+  count <- sum(seen==type)
+  if (count > 1){
+    sctype_scores$type[row] <- paste(type, "-",count, sep="")
+  }
+}
+
 # display clusters on the UMAP
 vta_morph.combined@meta.data$cell_type = ""
 for(j in unique(sctype_scores$cluster)){
@@ -262,21 +281,25 @@ for(j in unique(sctype_scores$cluster)){
   vta_morph.combined@meta.data$cell_type[vta_morph.combined@meta.data$seurat_clusters == j] = as.character(cl_type$type[1])
 }
 
-DimPlot(vta_morph.combined, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'cell_type')  
+cell_type.umap <- DimPlot(vta_morph.combined, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'cell_type')
+cell_type.umap
 
 #condense cell type names for easier display
-vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Glutamatergic neurons")] <- "Glut"
-vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Oligodendrocyte precursor cells")] <- "OPC"
-vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "GABAergic neurons")] <- "GABA"
-vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Dopaminergic neurons")] <- "Dopa"
-vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Endothelial cells")] <- "Endothelial"
-vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Microglial cells")] <- "Microglia"
-vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Neuroepithelial cells")] <- "Neuroepithelial"
+# vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Glutamatergic neurons")] <- "Glut"
+# vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Oligodendrocyte precursor cells")] <- "OPC"
+# vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "GABAergic neurons")] <- "GABA"
+# vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Dopaminergic neurons")] <- "Dopa"
+# vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Endothelial cells")] <- "Endothelial"
+# vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Microglial cells")] <- "Microglia"
+# vta_morph.combined@meta.data$cell_type[which(vta_morph.combined@meta.data$cell_type == "Neuroepithelial cells")] <- "Neuroepithelial"
 ```
+
 # Bubble ScType Visualization
 ```{r bubble ScType visualization}
 # load libraries
 lapply(c("ggraph","igraph","tidyverse", "data.tree"), library, character.only = T)
+
+Idents(vta_morph.combined) <- "seurat_clusters"
 
 # prepare edges
 cL_resutls = cL_resutls[order(cL_resutls$cluster),]; edges = cL_resutls; edges$type = paste0(edges$type,"_",edges$cluster); edges$cluster = paste0("cluster ", edges$cluster); edges = edges[,c("cluster", "type")]; colnames(edges) = c("from", "to"); rownames(edges) <- NULL
@@ -308,6 +331,7 @@ gggr<- ggraph(mygraph, layout = 'circlepack', weight=I(ncells)) +
 #BiocManager::install("scater")
 
 scater::multiplot(DimPlot(vta_morph.combined, reduction = "umap", label = TRUE, repel = TRUE, cols = ccolss), gggr, cols = 2)
+#save.image(file = "~/UCDavis/Nord/cell_type_vta_morph_analysis_clean.RData")
 ```
 # DE
 ```{r Clustering and DE by condition}
@@ -329,28 +353,28 @@ vta_morph.combined_markers %>%
     filter(p_val_adj < 0.05)  -> cluster_top_genes
 
 write.csv(cluster_top_genes,"~/UCDavis/Nord/pval_cluster_top_genes.csv", row.names = FALSE)
+#save.image(file = "~/UCDavis/Nord/DE1_vta_morph_analysis_clean.RData")
 ```
 # Sex and Genotype DE for later
 ```{r more DE for later}
+#currently this does not work
 ## what genes are differentially expressed between sexes and genotypes
-
 Idents(vta_morph.combined) <- "sex"
 sex.markers <- FindMarkers(vta_morph.combined, ident.1 = 'male', ident.2 = 'female', min.pct = 0.25)
 
 sex.markers %>%
     group_by(cluster) %>%
     filter(p_val_adj < 0.05)  -> sex_top_genes
-# 
-# Idents(vta_morph.combined) <- "genotype"
-# genotype.markers <- FindMarkers(vta_morph.combined, ident.1 = 'wt', ident.2 = 'RMOR', min.pct = 0.25)
-# 
-#  genotype.markers %>%
-#     group_by(cluster) %>%
-#     filter(p_val_adj < 0.05)  -> genotype_top_genes
+
+Idents(vta_morph.combined) <- "genotype"
+genotype.markers <- FindMarkers(vta_morph.combined, ident.1 = 'wt', ident.2 = 'RMOR', min.pct = 0.25)
+
+genotype.markers %>%
+  group_by(cluster) %>%
+  filter(p_val_adj < 0.05)  -> genotype_top_genes
 
 
 #genotype differences across clusters
-Idents(vta_morph.combined) <- "seurat_clusters"
 wt <- subset(vta_morph.combined, subset=(genotype=='wt'))
 RMOR <- subset(vta_morph.combined, subset=(genotype=='RMOR'))
 wt.markers <- FindAllMarkers(wt, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
@@ -380,22 +404,29 @@ for (gene in 1:length(RMOR_top_genes$cluster)){
   clust <- RMOR_top_genes$cluster[gene]
   cell_type_cluster_list <- append(cell_type_cluster_list,  cell_types_clusters$cell_type[which(cell_types_clusters$seurat_cluster == clust)])
 }
+
 RMOR_top_genes$cell_type <- cell_type_cluster_list  
 
 
-write.csv(wt_top_genes,"~/UCDavis/Nord/pval_wt_top_genes.csv", row.names = FALSE)
-write.csv(RMOR_top_genes,"~/UCDavis/Nord/pval_RMOR_top_genes.csv", row.names = FALSE)
+write.csv(wt_top_genes,"~/UCDavis/Nord/nord/pval_wt_top_genes.csv", row.names = FALSE)
+write.csv(RMOR_top_genes,"~/UCDavis/Nord/nord/pval_RMOR_top_genes.csv", row.names = FALSE)
 
 write.csv(wt_top_genes %>% slice_max(n = 10, order_by = avg_log2FC),"~/UCDavis/Nord/pval_wt_top10_genes.csv", row.names = FALSE)
 write.csv(RMOR_top_genes %>% slice_max(n = 10, order_by = avg_log2FC),"~/UCDavis/Nord/pval_RMOR_top10_genes.csv", row.names = FALSE)
-
 
 ```
 
 # Heatmap
 ```{r Heatmap}
 Idents(vta_morph.combined) <- "seurat_clusters"
-DoHeatmap(vta_morph.combined, features=top10$gene) + NoLegend() + theme(axis.text.y = element_text(size = 2))  
+#Idents(vta_morph.combined) <- "cell_type"
+DoHeatmap(vta_morph.combined, features=top10$gene, group.by="cell_type") + NoLegend() + theme(axis.text.y = element_text(size = 2))
+#save.image(file = "~/UCDavis/Nord/heatmap_vta_morph_analysis_clean.RData")
+
+Idents(vta_morph.combined) <- "cell_type"
+lev <- vta_morph.combined@meta.data[,c("cell_type","seurat_clusters")] %>% unique() %>% arrange(seurat_clusters)
+vta_morph.combined$cell_type <- factor(vta_morph.combined$cell_type, levels=lev$cell_type)
+DoHeatmap(vta_morph.combined, features=top10$gene, group.by="cell_type") + NoLegend() + theme(axis.text.y = element_text(size = 2))
 ```
 # Heatmap error
 Warning message:
@@ -404,7 +435,16 @@ In DoHeatmap(vta_morph.combined, features = top10$gene) :
 
 # Stacked Violin Plot
 ```{r stacked violin plot}
+z <- NULL
+for (x in gs_list$gs_positive){
+  for( y in x){
+    z <- paste(z,str_to_title(y),",",sep="")
+  }
+}
 
+z <- toString(z)
+z <- unlist(strsplit(z, ",")[[1]]) 
+cell_type_features <- z
 
 
 rat_vta_features <- c('Th', 'Slc17e6', 'Slc17a6', 'Pnoc', 'Slc32a1', 'Aqp4', 'Arhgap15', 'Mobp', 'Hist1h2an', 'Pdgfra', 'Dock6', 'Eng', 'Slc18a2', 'Htr2c', 'Grn2', 'Gad1', 'Pdgfrb', 'Drd2', 'Oprm1')
@@ -416,20 +456,25 @@ mouse_vta_features <- c('Gpc5', 'Slc4a4', 'Myoc', 'Gm3764', 'Adamts9', 'Schip1',
 mouse_vta_features <- factor(mouse_vta_features, levels=mouse_vta_features)
 
 Idents(vta_morph.combined) <- "cell_type"
+#Idents(vta_morph.combined) <- "seurat_clusters"
+
 mouse_feat_stacked_violin <- VlnPlot(vta_morph.combined, features=mouse_vta_features, stack = TRUE, sort = TRUE, flip=TRUE) +
     theme(legend.position = "none", axis.text.x=element_text(size=10, angle=90, hjust=-0.1, face='bold'), axis.text.y=element_text(size=4)) + ggtitle("Top Variable Genes in Our Data") + scale_x_discrete(position = "top") 
 
 rat_feat_stacked_violin <- VlnPlot(vta_morph.combined, features=rat_vta_features, sort=TRUE, stack = TRUE, flip=TRUE) +
     theme(legend.position = "none", axis.text.x=element_text(size=10, angle=90, hjust=-0.1, face='bold'), axis.text.y=element_text(size=4)) + ggtitle("Top Variable Genes in Our Data") + scale_x_discrete(position = "top") 
 
+cell_type_feat_stacked_violin <- VlnPlot(vta_morph.combined, features=cell_type_features, sort=TRUE, stack = TRUE, flip=TRUE) +
+    theme(legend.position = "none", axis.text.x=element_text(size=10, angle=90, hjust=-0.1, face='bold'), axis.text.y=element_text(size=4)) + ggtitle("Cell Type Genes in Our Data") + scale_x_discrete(position = "top")
+
 mouse_feat_stacked_violin
 rat_feat_stacked_violin
-
+cell_type_feat_stacked_violin
 ```
 
 # Bar graph of cell count by cell_type
 ```{r cell cout by cell type}
-vta_morph.combined@meta.data$cell_type <- factor(vta_morph.combined@meta.data$cell_type, levels=c("Tanycytes","Endothelial","Oligodendrocytes","Neuroepithelial","GABA","Microglia","Astrocytes","Mature neurons","Glut","OPC", "Dopa"))
+#vta_morph.combined@meta.data$cell_type <- factor(vta_morph.combined@meta.data$cell_type, levels=c("Tanycytes","Endothelial","Oligodendrocytes","Neuroepithelial","GABA","Microglia","Astrocytes","Mature neurons","Glut","OPC", "Dopa"))
 
 data <- vta_morph.combined@meta.data
 ggplot(data=data) +
@@ -448,11 +493,272 @@ ggplot(data=freq_table.merged[seq(2,22,2),]) +
   ylab("Proportion") +
   ggtitle("Green Shows Proportion of wt Cells by Cell Type")
 ```
+
+```{r Reclustering}
+neurons_only <- subset(vta_morph.combined, subset=cell_type %in% c("GABAergic neurons","Cancer cells","GABAergic neurons-2","Glutamatergic neurons","Glutamatergic neurons-2","Dopaminergic neurons"))
+```
+
+# PCA and Elbow
+```{r Run PCA}
+neurons.variable.genes <- VariableFeatures(neurons_only)
+neurons_only <- ScaleData(neurons_only, features=neurons.variable.genes)
+neurons_only <- RunPCA(neurons_only, features=neurons.variable.genes)
+ElbowPlot(neurons_only)
+```
+# Cluster Cells
+```{r Cluster Cells}
+neurons_only <- FindNeighbors(neurons_only, dims = 1:11)
+neurons_only <- FindClusters(neurons_only, resolution = 0.5)
+```
+
+# Assign Cell Type with ScType for neurons_only
+``` {r Assign Cell Type with ScType}
+#https://github.com/IanevskiAleksandr/sc-type
+
+# load gene set preparation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/gene_sets_prepare.R")
+# load cell type annotation function
+source("https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/R/sctype_score_.R")
+
+
+# DB file
+db_ = "https://raw.githubusercontent.com/IanevskiAleksandr/sc-type/master/ScTypeDB_full.xlsx";
+tissue = "Brain" # e.g. Immune system, Liver, Pancreas, Kidney, Eye, Brain
+
+# prepare gene sets
+gs_list = gene_sets_prepare(db_, tissue)
+
+# get cell-type by cell matrix
+es.max = sctype_score(scRNAseqData = neurons_only[["RNA"]]@scale.data, scaled = TRUE, 
+                      gs = gs_list$gs_positive, gs2 = gs_list$gs_negative) 
+
+
+# merge by cluster 
+# not that cL_resutls seems to be spelled wrong
+# this is used for the bubble visualization too so it is important that the condensed cell type naming is done after this
+cL_resutls = do.call("rbind", lapply(unique(neurons_only@meta.data$seurat_clusters), function(cl){
+    es.max.cl = sort(rowSums(es.max[ ,rownames(neurons_only@meta.data[neurons_only@meta.data$seurat_clusters==cl, ])]), decreasing = !0)
+    head(data.frame(cluster = cl, type = names(es.max.cl), scores = es.max.cl, ncells = sum(neurons_only@meta.data$seurat_clusters==cl)), 10)
+}))
+sctype_scores = cL_resutls %>% group_by(cluster) %>% top_n(n = 1, wt = scores)  
+
+# set low-confident (low ScType score) clusters to "unknown"
+sctype_scores$type[as.numeric(as.character(sctype_scores$scores)) < sctype_scores$ncells/4] = "Unknown"
+print(sctype_scores[,1:3])
+
+#ethan added code to label same cell-type clusters separately
+seen <- c()
+for (row in 1:length(sctype_scores$type)){
+  type <- sctype_scores$type[row]
+  seen <- append(seen, type)
+  count <- sum(seen==type)
+  if (count > 1){
+    sctype_scores$type[row] <- paste(type, "-",count, sep="")
+  }
+}
+
+# display clusters on the UMAP
+neurons_only@meta.data$cell_type = ""
+for(j in unique(sctype_scores$cluster)){
+  cl_type = sctype_scores[sctype_scores$cluster==j,]; 
+  neurons_only@meta.data$cell_type[neurons_only@meta.data$seurat_clusters == j] = as.character(cl_type$type[1])
+}
+
+neurons_only.umap <- DimPlot(neurons_only, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'cell_type')  
+```
+
+# UMAP neurons_only
+```{r UMAP}
+neurons_only <- RunUMAP(neurons_only, dims = 1:12)
+
+Idents(neurons_only) <- "seurat_clusters"
+neurons.umap <- DimPlot(neurons_only, reduction = "umap", label=TRUE)
+
+Idents(neurons_only) <- "orig.ident"
+orig.ident.neurons.umap <- DimPlot(neurons_only, reduction = "umap")
+
+Idents(neurons_only) <- "sex"
+sex.neurons.umap <- DimPlot(neurons_only, reduction = "umap")
+
+Idents(neurons_only) <- "genotype"
+genotype.neurons.umap <- DimPlot(neurons_only, reduction = "umap")
+
+Idents(neurons_only) <- "cell_type"
+cell_type.neurons.umap <- DimPlot(neurons_only, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'cell_type')
+
+neurons.umap
+orig.ident.neurons.umap
+sex.neurons.umap
+genotype.neurons.umap
+cell_type.neurons.umap
+```
+
+# DE for Neurons Only
+```{r Clustering and DE by condition for Neurons Only}
+Idents(neurons_only) <- "seurat_clusters"
+
+neurons_only.markers <- FindAllMarkers(neurons_only, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+# add cell types to differentially expressed genes
+u <- unique(neurons_only@meta.data[,c("cell_type","seurat_clusters")])
+neurons_only.markers$cell_type <- u$cell_type[match(neurons_only.markers$cluster, u$seurat_clusters)]
+
+# reorganize the markers
+neurons_only.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 10, order_by = avg_log2FC) -> top10_neuron
+
+neurons_only.markers %>%
+    group_by(cluster) %>%
+    filter(p_val_adj < 0.05)  -> cluster_top_genes_neuron
+
+write.csv(cluster_top_genes_neuron,"~/UCDavis/Nord/pval_neurons_cluster_top_genes.csv", row.names = FALSE)
+#save.image(file = "~/UCDavis/Nord/DE1_vta_morph_analysis_clean.RData")
+```
+
+#Heatmap for Neurons Only
+```{r Heatmap for neurons only}
+Idents(neurons_only) <- "cell_type"
+#Idents(vta_morph.combined) <- "cell_type"
+DoHeatmap(neurons_only, features=top10_neuron$gene, group.by="cell_type", size=3, angle=90) + NoLegend() + theme(axis.text.y = element_text(size = 2))
+```
+
+#remove mt defined clusters
+```{r remove mt defined cells}
+mt_cell_types <- c("GABAergic neurons-3", "GABAergic neurons-4")
+subset <- neurons_only$cell_type[neurons_only$cell_type %ni% mt_cell_types] %>% unique()
+save(neurons_only, file="~/UCDavis/Nord/neurons_only.RData")
+neurons_only_no_mt <- subset(neurons_only, subset=cell_type %in% subset)
+```
+
+# recluster after removing mt clusters
+```{r recluster after removing mt clusters}
+# find variable genes and scale
+neurons_no_mt.variable.genes <- VariableFeatures(neurons_only_no_mt)
+neurons_only_no_mt <- ScaleData(neurons_only_no_mt, features=neurons_no_mt.variable.genes)
+
+# PCA and Elbow after removing mt clusters
+neurons_only_no_mt <- RunPCA(neurons_only_no_mt, features=neurons_no_mt.variable.genes)
+ElbowPlot(neurons_no_mt)
+# Cluster Cells
+neurons_only_no_mt <- FindNeighbors(neurons_only_no_mt, dims = 1:11)
+neurons_only_no_mt <- FindClusters(neurons_only_no_mt, resolution = 0.5)
+```
+
+# DE after removing mt clusters
+```{r Clustering and DE by condition for Neurons Only after removing mt clusters}
+Idents(neurons_only_no_mt) <- "seurat_clusters"
+
+neurons_only_no_mt.markers <- FindAllMarkers(neurons_only_no_mt, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+# add cell types to differentially expressed genes
+u <- unique(neurons_only_no_mt@meta.data[,c("cell_type","seurat_clusters")])
+neurons_only_no_mt.markers$cell_type <- u$cell_type[match(neurons_only_no_mt.markers$cluster, u$seurat_clusters)]
+
+# reorganize the markers
+neurons_only_no_mt.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 10, order_by = avg_log2FC) -> top10_neuron_no_mt
+
+neurons_only_no_mt.markers %>%
+    group_by(cluster) %>%
+    filter(p_val_adj < 0.05)  -> cluster_top_genes_neuron_no_mt
+
+write.csv(cluster_top_genes_neuron,"~/UCDavis/Nord/pval_neurons_cluster_no_mt_top_genes.csv", row.names = FALSE)
+#save.image(file = "~/UCDavis/Nord/DE1_vta_morph_analysis_clean.RData")
+```
+#Heatmap for Neurons Only after removing mt clusters
+```{r Heatmap for neurons only after removing mt clusters}
+Idents(neurons_only_no_mt) <- "cell_type"
+lev <- levels(Idents(neurons_only_no_mt)) 
+#Idents(vta_morph.combined) <- "cell_type"
+top10_neuron_no_mt <- top10_neuron[which(top10_neuron$cell_type %in% unique(neurons_only_no_mt$cell_type)),]
+
+top10_neuron_no_mt <- top10_neuron_no_mt %>% mutate(cell_type = factor(cell_type, levels=lev)) %>% arrange(cell_type)
+
+
+DoHeatmap(neurons_only_no_mt, features=top10_neuron_no_mt$gene, size=3, angle=90) + NoLegend() + theme(axis.text.y = element_text(size = 2))
+#UMAP cell types after removing mt clusters
+Idents(neurons_only_no_mt) <- "cell_type"
+cell_type.neurons_no_mt.umap <- DimPlot(neurons_only_no_mt, reduction = "umap", label = TRUE, repel = TRUE, group.by = 'cell_type')
+cell_type.neurons_no_mt.umap
+```
+
+#DE for da neuron subtypes
+```{r DE for da neuron subtypes}
+da_neurons <- subset(neurons_only_no_mt, subset=(cell_type=="Dopaminergic neurons"))
+Idents(da_neurons) <- "genotype"
+da_neuron_genotype_markers <- FindMarkers(da_neurons, ident.1="RMOR")
+da_neuron_genotype_markers
+
+filter_sex <- function(markers, female_markers, male_markers){
+  m <- markers[which(rownames(markers) %ni% female_markers),]
+  return (m[which(rownames(markers) %ni% male_markers),])
+}
+
+da_genotype_asex <- filter_sex(da_neuron_genotype_markers, top20_female_markers, top20_male_markers)
+```
+
+
+# counter for da neuron subtypes
+```{r DE for da neuron subtypes}
+counter <- function(so, subset_cell_type, idents){
+  subset <- subset(so, subset=cell_type==subset_cell_type)
+  ident_df <- NULL
+  for (ident in idents){
+    if (is.null(ident_df)){
+      ident_df <- data.frame(ident=subset@meta.data[,ident])
+      colnames(ident_df) <- ident
+    }else{
+      ident_df[,ident] <- subset@meta.data[,ident]
+    }
+  }
+  table(ident_df) %>% print()
+  return(ident_df)
+}
+
+ident_df <- counter(neurons_only, subset_cell_type="Dopaminergic neurons", idents=c("genotype","sex","seurat_clusters"))
+```
+
+# Sex DE
+```{r sex DE}
+Idents(neurons_only) <- "sex"
+
+neurons_only.sex.markers <- FindAllMarkers(neurons_only, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+# add cell types to differentially expressed genes
+u <- unique(neurons_only@meta.data[,c("cell_type","sex")])
+neurns_only.sex.markers$cell_type <- u$cell_type[match(neurons_only.sex.markers$cluster, u$seurat_clusters)]
+
+# reorganize the markers
+neurons_only.sex.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 10, order_by = avg_log2FC) -> top10_neuron_sex
+
+neurons_only.sex.markers %>%
+    group_by(cluster) %>%
+    filter(p_val_adj < 0.05)  -> cluster_top_genes_neuron_sex
+
+top20_male_markers <- 
+  neurons_only.sex.markers[which(neurons_only.sex.markers$cluster == "male"),]$gene %>% head(20)
+
+top20_female_markers <- 
+  neurons_only.sex.markers[which(neurons_only.sex.markers$cluster == "female"),]$gene %>% head(20)
+
+write.csv(cluster_top_genes_neuron_sex,"~/UCDavis/Nord/pval_neurons_sex_cluster_top_genes.csv", row.names = FALSE)
+#save.image(file = "~/UCDavis/Nord/DE1_vta_morph_analysis_clean.RData")
+
+```
+
+
+
+
 # save image
 ```{r save image}
-save.image(file = "~/UCDavis/Nord/vta_morph_analysis_clean.RData")
+save(seurat_objects, file="~/UCDavis/Nord/seurat_objects.RData")
+save.image(file = "~/UCDavis/Nord/soup_vta_morph_analysis_clean.RData")
+#save.image(file = "~/UCDavis/Nord/vta_morph_analysis_clean.RData")
 #load(file = "~/UCDavis/Nord/vta_morph_analysis_clean.RData")
-
 ```
 
 #Notes from Nord Meeting
@@ -476,3 +782,4 @@ save.image(file = "~/UCDavis/Nord/vta_morph_analysis_clean.RData")
  1037 f-wt
  1038 m-wt
  1039 m-het
+ 
